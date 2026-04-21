@@ -1,30 +1,115 @@
 ---
-name: create-script
-description: Generate a new blank T-SQL correction script for a CIRHD ticket. Use this when asked to create a new script or scaffold a new ticket.
+name: review-sql
+description: Analyse and reformat T-SQL correction scripts for the CIR housing registration system. Use this when asked to analyse, review, or fix the formatting of a CIRHD SQL script.
 ---
 
-# New Script Generator
+# SQL Script Analysis & Formatting
 
-When asked to create a new script for a ticket:
+When reviewing a SQL script, always do **both** steps in order:
+1. **Reformat** the SQL file in place using the formatting rules below
+2. **Analyse** the reformatted script and save findings to `<ticket>-analysis.md` in the same directory
 
-1. Ask the user whether it is a **single-step** or **multi-step** script (if not already specified)
-2. Ask for the **ticket number** (e.g. `CIRHD-12345`) if not already provided
-3. Generate the file(s) in the current working directory using the templates below
-4. For multi-step, ask how many steps are needed — accept any number (freeform input, not a fixed list) — and generate each file (`_1.sql`, `_2.sql`, …)
+When asked only to fix formatting, skip the analysis step.
 
----
+## Formatting scope
 
-## Single-step template — `CIRHD-XXXXX.sql`
+**Formatting only** (apply automatically, no confirmation needed):
+- Keyword casing, indentation, vertical alignment, semicolons, blank lines between sections
+- Remove unnecessary square brackets
+
+**Everything else** (ask the user before applying):
+- Extracting hardcoded literals (IDs, dates, counts) into named `DECLARE` variables
+- Adding a `BEGIN TRAN` / `@@ROWCOUNT` / `COMMIT TRAN` block where none exists
+- Splitting one batch into multiple separate transactions
+- Adding `RAISERROR` + `RETURN` to an existing rollback path
+- Wrapping `SET IDENTITY_INSERT` inside a transaction
+- Adding `AND REGI_RGST_CDE NOT IN ('RJCT', 'RFSD', 'ARCH')` to an existing `WHERE` clause
+- Any other change that alters the **logic, structure, or values** of the script
+
+When any of the above is needed, present the proposed change to the user and ask for confirmation before writing it to the file.
+
+## Formatting
+
+- All SQL keywords uppercase (`SELECT`, `FROM`, `WHERE`, `JOIN`, `UPDATE`, `SET`, `AND`, `BEGIN`, `END`, `COMMIT`, `ROLLBACK`, etc.)
+- 4-space indentation inside `BEGIN TRAN`
+- Align `SET` columns and `WHERE`/`AND` conditions vertically
+- Each `AND` in a `JOIN … ON` block on its own line, indented to align with the first condition
+- Subqueries indented one level deeper than the parent
+- One blank line between logical sections
+- Semicolons at the end of each DML statement
+- No unnecessary square brackets around table or column names
+- Extract magic numbers into named `DECLARE` variables with a comment (e.g. `DECLARE @RegiBaseId BIGINT = 51000000; -- Starting index of the Registration table`)
+
+## Analysis
+
+Save the analysis as `<ticket>-analysis.md` in the **same directory** as the SQL file.
+
+### Structure
+
+```
+# <TICKET> — Script Analysis & Risks
+
+## What the script does
+<plain-language explanation, step by step for multi-step series>
+
+## Risks
+
+### 🔴 HIGH — <title>
+<explanation + recommendation>
+
+### 🟡 MEDIUM — <title>
+<explanation>
+
+### 🟢 LOW — <title>
+<explanation>
+
+## Execution order summary (for multi-step series)
+| Step | File | Action | Max row guard |
+
+## Risk summary
+| Severity | Risk |
+```
+
+### What to flag as 🔴 HIGH
+
+- No `BEGIN TRAN` / `@@ROWCOUNT` guard
+- `RAISERROR` on rollback without `RETURN` — execution continues and `COMMIT TRAN` fires against a closed transaction
+- `@@ROWCOUNT >= limit` instead of `> limit` — rolls back valid runs at the exact threshold
+- `PRINT` instead of `RAISERROR` on rollback — silent in automated contexts
+- `DECLARE` statements placed after the first `@@ROWCOUNT` check — if rollback fires, subsequent DML runs outside any transaction
+- Unbounded DML with no row-count safety limit
+
+### What to flag as 🟡 MEDIUM
+
+- Fragile row-number alignment assumptions (e.g. `ROW_NUMBER() + 1` offset that breaks if row counts differ)
+- Unbounded scope — query affects all matching rows in the DB, not scoped to ticket-specific IDs
+- Batched updates (`UPDATE TOP (N)`) with no progress indicator or stop condition
+- Complex `WHERE` logic duplicated across steps that must stay in sync
+- Name-based lookups (`WHERE Name = '...'`) sensitive to duplicates
+- Logic that silently skips rows due to multi-value preferences (e.g. registration has multiple city preferences — if WM still active in one, it won't be marked for deletion)
+- Joins that may miss intended rows (e.g. joining on both `REGI_ID` and `PART_ID` when only `REGI_ID` was intended)
+- Missing audit trail — no insert into `support.RegistrationActionComment` when `RegistrationAction` rows are inserted or updated
+- Terminal statuses (`RJCT`, `RFSD`, `ARCH`) not excluded from DML scope
+
+### What to flag as 🟢 LOW
+
+- Implicit type conversions (e.g. numeric column compared to string `'99999'`)
+- Copy-pasted code blocks (e.g. DST calculation repeated across multiple files)
+- `DROP TABLE IF EXISTS` inside a `BEGIN TRAN` boundary
+
+### What NOT to flag
+
+- The absence of preview SELECTs — scripts are run by a team that does not act on query results
+
+## Standard patterns to enforce
+
+### Transaction with row-count guard
 
 ```sql
--- CIRHD-XXXXX
--- <Short description of what this script does>
-
-DECLARE @maxUpdateCount INT = /* ??? */;
-
 BEGIN TRAN
+    DECLARE @maxUpdateCount INT = /* expected max */;
 
-    -- TODO: DML here
+    -- ... DML ...
 
     IF @@ROWCOUNT > @maxUpdateCount
     BEGIN
@@ -36,68 +121,34 @@ BEGIN TRAN
 COMMIT TRAN;
 ```
 
----
-
-## Multi-step template
-
-Each step gets its own file. Use this structure per step:
-
-### `CIRHD-XXXXX_N.sql`
+### RegistrationAction insert
 
 ```sql
--- CIRHD-XXXXX — Step N: <Short description of this step>
-
-DECLARE @maxUpdateCount INT = /* ??? */;
-
-BEGIN TRAN
-
-    -- TODO: DML here
-
-    IF @@ROWCOUNT > @maxUpdateCount
-    BEGIN
-        ROLLBACK TRAN;
-        RAISERROR('Updated more rows than expected, reverting', 18, 1);
-        RETURN;
-    END
-
-COMMIT TRAN;
+INSERT INTO RegistrationAction
+    (REAC_REGI_ID, REAC_ACTP_CDE, REAC_RAST_CDE, REAC_USR_CRE, REAC_USR_CRE_DTE,
+     REAC_RRN_NBR, REAC_RAST_IX, REAC_ASAS_CDE, REAC_Priority)
+VALUES
+    (<REGI_ID>, '<ACTP>', 'REQ', 'UHLPD', GETDATE(), '<RRN>', 1, 'AU', 900);
 ```
 
----
+Always follow with an insert into `support.RegistrationActionComment` referencing the ticket number.
 
-## Rules for generated scripts
+### Temp tables
 
-- All `DECLARE` statements must be **above** `BEGIN TRAN`
-- Use `@@ROWCOUNT > @maxUpdateCount` (not `>=`)
-- Always `RAISERROR` (not `PRINT`) on rollback, followed immediately by `RETURN;`
-- Use `'UHLPD'` for all `USR_CRE` / `USR_UPD` fields
-- Exclude terminal statuses unless the ticket specifically targets them:
-  ```sql
-  AND REGI_RGST_CDE NOT IN ('RJCT', 'RFSD', 'ARCH')
-  ```
-- When inserting into `RegistrationAction`, always follow with an insert into `support.RegistrationActionComment`:
-  ```sql
-  INSERT INTO support.RegistrationActionComment (RegistrationActionId, CreatedOn, Comment)
-  SELECT RegistrationActionId, GETDATE(), 'CIRHD-XXXXX <description>'
-  FROM   #reacid;
-  ```
-- Check temp tables for existence before creating, and drop at end:
-  ```sql
-  IF OBJECT_ID('tempdb..#TableName') IS NOT NULL DROP TABLE #TableName;
-  -- ...
-  DROP TABLE #TableName;
-  ```
-- Extract magic numbers into named `DECLARE` variables with a comment
+```sql
+IF OBJECT_ID('tempdb..#TableName') IS NOT NULL DROP TABLE #TableName;
+-- ... use #TableName ...
+DROP TABLE #TableName;
+```
 
----
+### Deleting a registration
 
-## Specialised file suffixes
+```sql
+EXEC sp_DeleteRegistration '<REF_NBR>';
+```
 
-If the ticket requires supporting files, generate them with the correct suffix:
+### Excluding terminal statuses
 
-| Suffix | Purpose |
-|--------|---------|
-| `_CREATE_ACTIONS.sql` | Inserts `RegistrationAction` rows to trigger processing |
-| `_CLS_ACTIONS.sql` | Closes / clears action rows after processing |
-| `_ACTION_PROGRESS.sql` | Monitoring query — no DML, no transaction needed |
-| `_DAILY_REPORT.sql` | Recurring report — no DML, no transaction needed |
+```sql
+WHERE REGI_RGST_CDE NOT IN ('RJCT', 'RFSD', 'ARCH')
+```
