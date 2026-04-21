@@ -2,7 +2,7 @@ name: SQL Review Request
 description: Submit a T-SQL correction script for review
 title: "CIRHD-XXXXX: <short description>"
 labels: ["sql-review"]
-assignees: ["github-copilot"]
+assignees: ["copilot"]
 body:
   - type: input
     id: ticket
