@@ -4,12 +4,12 @@
 
 ```
 Dev writes SQL
-    → pastes raw SQL into Jira ticket
-    → reviewer (support dev) copies it into VS Code
+    → pastes SQL file into Jira ticket
+    → reviewer (support dev) downloads it
     → manually invokes review-sql skill in Copilot
     → Copilot reformats + writes analysis .md
     → reviewer pastes reformatted SQL back into Jira
-    → reviewer pastes SQL again into Ops ticket
+    → reviewer pastes SQL file again into Ops ticket
 ```
 
 **Pain points:**

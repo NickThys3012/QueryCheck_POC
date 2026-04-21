@@ -1,0 +1,40 @@
+name: SQL Review Request
+description: Submit a T-SQL correction script for review
+title: "CIRHD-XXXXX: <short description>"
+labels: ["sql-review"]
+assignees: ["github-copilot"]
+body:
+  - type: input
+    id: ticket
+    attributes:
+      label: Jira ticket
+      placeholder: CIRHD-12345
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What does this script do?
+      description: Plain-language summary (becomes the script header comment)
+    validations:
+      required: true
+
+  - type: textarea
+    id: sql
+    attributes:
+      label: SQL script
+      description: Paste the full script here
+      render: sql
+    validations:
+      required: true
+
+  - type: dropdown
+    id: steps
+    attributes:
+      label: Single-step or multi-step?
+      options:
+        - Single-step
+        - Multi-step
+    validations:
+      required: true
