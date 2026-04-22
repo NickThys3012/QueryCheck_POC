@@ -7,6 +7,7 @@ from openai import OpenAI
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
+ISSUE_TITLE   = os.environ.get("ISSUE_TITLE", "")
 ISSUE_BODY    = os.environ["ISSUE_BODY"]
 ISSUE_NUMBER  = int(os.environ["ISSUE_NUMBER"])
 REPO          = os.environ["REPO"]
@@ -29,6 +30,24 @@ def extract_sql_from_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return re.sub(r"^```\w*\s*|^```\s*", "", text, flags=re.MULTILINE).strip()
+
+def extract_ticket(raw_ticket: str, issue_title: str, sql: str) -> str:
+    # Prefer a CIRHD ticket reference when available.
+    for source in (raw_ticket, issue_title, sql):
+        match = re.search(r"\bCIRHD-\d+\b", source or "", re.IGNORECASE)
+        if match:
+            return match.group(0).upper()
+    fallback_ticket = raw_ticket.strip()
+    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?", fallback_ticket):
+        return fallback_ticket
+    raise ValueError("No valid ticket identifier found in issue or SQL content")
+
+def safe_ticket_file_name(ticket: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", ticket):
+        raise ValueError("Ticket contains invalid characters for a file name")
+    if ".." in ticket:
+        raise ValueError("Ticket cannot contain path traversal sequence")
+    return ticket
 
 def github_request(method: str, path: str, body: dict = None):
     owner, repo = REPO.split("/")
@@ -53,18 +72,25 @@ def github_request(method: str, path: str, body: dict = None):
 # ── Determine source of SQL ────────────────────────────────────────────────────
 if TRIGGER == "issue_comment":
     print("Trigger: re-review comment")
-    ticket      = extract_section(ISSUE_BODY, "Jira ticket")
+    raw_ticket  = extract_section(ISSUE_BODY, "Jira ticket")
     description = extract_section(ISSUE_BODY, "What does this script do?")
     comment_content = re.sub(r"^/re-review\s*", "", COMMENT_BODY, flags=re.IGNORECASE).strip()
     sql         = extract_sql_from_fences(comment_content)
     review_note = "> ♻️ **Re-review** of updated SQL from comment\n\n"
 else:
     print("Trigger: issue opened")
-    ticket      = extract_section(ISSUE_BODY, "Jira ticket")
+    raw_ticket  = extract_section(ISSUE_BODY, "Jira ticket")
     description = extract_section(ISSUE_BODY, "What does this script do?")
     sql_block   = extract_section(ISSUE_BODY, "SQL script")
     sql         = extract_sql_from_fences(sql_block)
     review_note = ""
+
+try:
+    ticket = extract_ticket(raw_ticket, ISSUE_TITLE, sql)
+    ticket_file_name = safe_ticket_file_name(ticket)
+except ValueError as e:
+    print(f"Ticket validation failed: {e}")
+    exit(1)
 
 print(f"Ticket: {ticket}")
 print(f"SQL length: {len(sql)} chars")
@@ -119,7 +145,7 @@ reformatted_sql = extract_sql_from_fences(
     re.split(r"### 📋 Analysis", ai_response)[0]  # only look in the SQL section
 )
 
-file_path = f"tickets/{ticket}.sql"
+file_path = f"tickets/{ticket_file_name}.sql"
 file_content_encoded = base64.b64encode(
     (reformatted_sql + "\n").encode("utf-8")
 ).decode("utf-8")
