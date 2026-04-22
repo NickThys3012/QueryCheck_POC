@@ -38,7 +38,7 @@ def extract_ticket(raw_ticket: str, issue_title: str, sql: str) -> str:
         if match:
             return match.group(0).upper()
     fallback_ticket = raw_ticket.strip()
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", fallback_ticket):
+    if re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?", fallback_ticket):
         return fallback_ticket
     raise ValueError("No valid ticket identifier found in issue or SQL content")
 
