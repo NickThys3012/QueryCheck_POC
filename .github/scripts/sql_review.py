@@ -1,39 +1,68 @@
 import os
 import re
+import json
+import urllib.request
 from openai import OpenAI
 
-# ── Config ────────────────────────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────────
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
 ISSUE_BODY    = os.environ["ISSUE_BODY"]
 ISSUE_NUMBER  = int(os.environ["ISSUE_NUMBER"])
-REPO          = os.environ["REPO"]          # "owner/repo"
+REPO          = os.environ["REPO"]
+COMMENT_BODY  = os.environ.get("COMMENT_BODY", "")
+TRIGGER       = os.environ.get("TRIGGER", "issues")
 
-# GitHub Models API endpoint — same token, no extra secrets
 client = OpenAI(
     base_url="https://models.inference.ai.azure.com",
     api_key=GITHUB_TOKEN,
 )
 
-# ── Parse issue body ──────────────────────────────────────────────────────────
+# ── Parse helpers ──────────────────────────────────────────────────────────────
 def extract_section(body: str, heading: str) -> str:
-    """Extract the content under a ### heading from a GitHub issue form body."""
+    """Extract content under a ### heading from the issue form body."""
     pattern = rf"### {re.escape(heading)}\s*\n+(.*?)(?=\n###|\Z)"
     match = re.search(pattern, body, re.DOTALL)
     return match.group(1).strip() if match else ""
 
-ticket      = extract_section(ISSUE_BODY, "Jira ticket")
-description = extract_section(ISSUE_BODY, "What does this script do?")
-sql_block   = extract_section(ISSUE_BODY, "SQL script")
+def extract_sql_from_fences(text: str) -> str:
+    """Extract SQL from the first ```sql ... ``` block in text."""
+    match = re.search(r"```sql\s*\n(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    # Fallback: strip any fences generically
+    return re.sub(r"^```\w*\s*|^```\s*", "", text, flags=re.MULTILINE).strip()
 
-# Strip markdown fences if present
-sql = re.sub(r"^```sql\s*|^```\s*", "", sql_block, flags=re.MULTILINE).strip()
+# ── Determine source of SQL ────────────────────────────────────────────────────
+if TRIGGER == "issue_comment":
+    # /re-review triggered — SQL comes from the comment body
+    print("Trigger: re-review comment")
+    ticket      = extract_section(ISSUE_BODY, "Jira ticket")
+    description = extract_section(ISSUE_BODY, "What does this script do?")
+    # Strip the /re-review prefix, then grab the SQL block
+    comment_content = re.sub(r"^/re-review\s*", "", COMMENT_BODY, flags=re.IGNORECASE).strip()
+    sql = extract_sql_from_fences(comment_content)
+    review_note = "> ♻️ **Re-review** of updated SQL from comment\n\n"
+else:
+    # Initial issue open — SQL comes from the issue form body
+    print("Trigger: issue opened")
+    ticket      = extract_section(ISSUE_BODY, "Jira ticket")
+    description = extract_section(ISSUE_BODY, "What does this script do?")
+    sql_block   = extract_section(ISSUE_BODY, "SQL script")
+    sql         = extract_sql_from_fences(sql_block)
+    review_note = ""
 
-# ── Load system prompt from skill file ───────────────────────────────────────
+print(f"Ticket: {ticket}")
+print(f"SQL length: {len(sql)} chars")
+
+if not sql:
+    print("No SQL found — aborting.")
+    exit(1)
+
+# ── Load system prompt from skill file ─────────────────────────────────────────
 with open(".github/skills/review-sql/SKILL.md", encoding="utf-8") as f:
     skill_content = f.read()
 
-SYSTEM_PROMPT = f"""
-{skill_content}
+SYSTEM_PROMPT = f"""{skill_content}
 
 You are reviewing a T-SQL correction script submitted via a GitHub Issue.
 Output ONLY the two sections below — no preamble, no explanation outside them.
@@ -47,17 +76,16 @@ Output ONLY the two sections below — no preamble, no explanation outside them.
 <full analysis following the structure in the skill file above>
 """.strip()
 
-USER_PROMPT = f"""
-Ticket: {ticket}
+USER_PROMPT = f"""Ticket: {ticket}
 Description: {description}
 
 SQL:
 ```sql
 {sql}
-```
-""".strip()
+```""".strip()
 
-# ── Call GitHub Models API ────────────────────────────────────────────────────
+# ── Call GitHub Models API ─────────────────────────────────────────────────────
+print("Calling GitHub Models API...")
 response = client.chat.completions.create(
     model="gpt-4o",
     messages=[
@@ -67,11 +95,10 @@ response = client.chat.completions.create(
     temperature=0,
 )
 
-comment_body = response.choices[0].message.content.strip()
+comment_body = review_note + response.choices[0].message.content.strip()
+print("Got response, posting comment...")
 
-# ── Post comment on issue ─────────────────────────────────────────────────────
-import urllib.request, json
-
+# ── Post comment on issue ──────────────────────────────────────────────────────
 owner, repo = REPO.split("/")
 url  = f"https://api.github.com/repos/{owner}/{repo}/issues/{ISSUE_NUMBER}/comments"
 data = json.dumps({"body": comment_body}).encode()
@@ -85,4 +112,4 @@ req  = urllib.request.Request(
     },
 )
 urllib.request.urlopen(req)
-print(f"Posted review comment on issue #{ISSUE_NUMBER}")
+print(f"✅ Posted review comment on issue #{ISSUE_NUMBER}")

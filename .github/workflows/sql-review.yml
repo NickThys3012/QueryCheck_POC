@@ -3,10 +3,15 @@ name: SQL Auto-Review
 on:
   issues:
     types: [opened]
+  issue_comment:
+    types: [created]
 
 jobs:
   review:
-    if: contains(github.event.issue.labels.*.name, 'sql-review')
+    # Trigger on new sql-review issues, OR on comments starting with /re-review
+    if: |
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'sql-review')) ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/re-review') && contains(github.event.issue.labels.*.name, 'sql-review'))
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -29,4 +34,7 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
+          # On re-review, pass the comment body so the script can extract the updated SQL
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          TRIGGER: ${{ github.event_name }}
         run: python .github/scripts/sql_review.py
