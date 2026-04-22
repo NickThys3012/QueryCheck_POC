@@ -7,6 +7,7 @@ from openai import OpenAI
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
+ISSUE_TITLE   = os.environ.get("ISSUE_TITLE", "")
 ISSUE_BODY    = os.environ["ISSUE_BODY"]
 ISSUE_NUMBER  = int(os.environ["ISSUE_NUMBER"])
 REPO          = os.environ["REPO"]
@@ -29,6 +30,20 @@ def extract_sql_from_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return re.sub(r"^```\w*\s*|^```\s*", "", text, flags=re.MULTILINE).strip()
+
+def extract_ticket(raw_ticket: str, issue_title: str, sql: str) -> str:
+    # Prefer a CIRHD ticket reference when available.
+    for source in (raw_ticket, issue_title, sql):
+        match = re.search(r"\bCIRHD-\d+\b", source or "", re.IGNORECASE)
+        if match:
+            return match.group(0).upper()
+    return raw_ticket.strip()
+
+def safe_ticket_file_name(ticket: str) -> str:
+    file_name = re.sub(r"[^A-Za-z0-9._-]", "-", ticket).strip(".-")
+    if not file_name:
+        raise ValueError("No valid ticket identifier found for file name")
+    return file_name
 
 def github_request(method: str, path: str, body: dict = None):
     owner, repo = REPO.split("/")
@@ -53,18 +68,21 @@ def github_request(method: str, path: str, body: dict = None):
 # ── Determine source of SQL ────────────────────────────────────────────────────
 if TRIGGER == "issue_comment":
     print("Trigger: re-review comment")
-    ticket      = extract_section(ISSUE_BODY, "Jira ticket")
+    raw_ticket  = extract_section(ISSUE_BODY, "Jira ticket")
     description = extract_section(ISSUE_BODY, "What does this script do?")
     comment_content = re.sub(r"^/re-review\s*", "", COMMENT_BODY, flags=re.IGNORECASE).strip()
     sql         = extract_sql_from_fences(comment_content)
     review_note = "> ♻️ **Re-review** of updated SQL from comment\n\n"
 else:
     print("Trigger: issue opened")
-    ticket      = extract_section(ISSUE_BODY, "Jira ticket")
+    raw_ticket  = extract_section(ISSUE_BODY, "Jira ticket")
     description = extract_section(ISSUE_BODY, "What does this script do?")
     sql_block   = extract_section(ISSUE_BODY, "SQL script")
     sql         = extract_sql_from_fences(sql_block)
     review_note = ""
+
+ticket = extract_ticket(raw_ticket, ISSUE_TITLE, sql)
+ticket_file_name = safe_ticket_file_name(ticket)
 
 print(f"Ticket: {ticket}")
 print(f"SQL length: {len(sql)} chars")
@@ -119,7 +137,7 @@ reformatted_sql = extract_sql_from_fences(
     re.split(r"### 📋 Analysis", ai_response)[0]  # only look in the SQL section
 )
 
-file_path = f"tickets/{ticket}.sql"
+file_path = f"tickets/{ticket_file_name}.sql"
 file_content_encoded = base64.b64encode(
     (reformatted_sql + "\n").encode("utf-8")
 ).decode("utf-8")
