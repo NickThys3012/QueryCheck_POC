@@ -37,13 +37,17 @@ def extract_ticket(raw_ticket: str, issue_title: str, sql: str) -> str:
         match = re.search(r"\bCIRHD-\d+\b", source or "", re.IGNORECASE)
         if match:
             return match.group(0).upper()
-    return raw_ticket.strip()
+    fallback_ticket = raw_ticket.strip()
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", fallback_ticket):
+        return fallback_ticket
+    raise ValueError("No valid ticket identifier found in issue or SQL content")
 
 def safe_ticket_file_name(ticket: str) -> str:
-    file_name = re.sub(r"[^A-Za-z0-9._-]", "-", ticket).strip(".-")
-    if not file_name:
-        raise ValueError("No valid ticket identifier found for file name")
-    return file_name
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", ticket):
+        raise ValueError("Ticket contains invalid characters for a file name")
+    if ".." in ticket:
+        raise ValueError("Ticket cannot contain path traversal sequence")
+    return ticket
 
 def github_request(method: str, path: str, body: dict = None):
     owner, repo = REPO.split("/")
@@ -81,8 +85,12 @@ else:
     sql         = extract_sql_from_fences(sql_block)
     review_note = ""
 
-ticket = extract_ticket(raw_ticket, ISSUE_TITLE, sql)
-ticket_file_name = safe_ticket_file_name(ticket)
+try:
+    ticket = extract_ticket(raw_ticket, ISSUE_TITLE, sql)
+    ticket_file_name = safe_ticket_file_name(ticket)
+except ValueError as e:
+    print(f"Ticket validation failed: {e}")
+    exit(1)
 
 print(f"Ticket: {ticket}")
 print(f"SQL length: {len(sql)} chars")
