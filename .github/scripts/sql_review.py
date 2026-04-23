@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import base64
 import urllib.request
 from openai import OpenAI
 
@@ -29,26 +28,6 @@ def extract_sql_from_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return re.sub(r"^```\w*\s*|^```\s*", "", text, flags=re.MULTILINE).strip()
-
-def github_request(method: str, path: str, body: dict = None):
-    owner, repo = REPO.split("/")
-    url = f"https://api.github.com/repos/{owner}/{repo}/{path}"
-    data = json.dumps(body).encode() if body else None
-    req = urllib.request.Request(
-        url, data=data, method=method,
-        headers={
-            "Authorization": f"Bearer {GITHUB_TOKEN}",
-            "Accept":        "application/vnd.github+json",
-            "Content-Type":  "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return None
-        raise
 
 # ── Determine source of SQL ────────────────────────────────────────────────────
 if TRIGGER == "issue_comment":
@@ -110,43 +89,21 @@ response = client.chat.completions.create(
     temperature=0,
 )
 
-ai_response  = response.choices[0].message.content.strip()
-comment_body = review_note + ai_response
-print("Got response.")
-
-# ── Extract reformatted SQL from AI response and save to file ──────────────────
-reformatted_sql = extract_sql_from_fences(
-    re.split(r"### 📋 Analysis", ai_response)[0]  # only look in the SQL section
-)
-
-file_path = f"tickets/{ticket}.sql"
-file_content_encoded = base64.b64encode(
-    (reformatted_sql + "\n").encode("utf-8")
-).decode("utf-8")
-
-# Check if file already exists (needed for update — requires current SHA)
-existing = github_request("GET", f"contents/{file_path}")
-commit_message = (
-    f"{'Update' if existing else 'Add'} {ticket}.sql (auto-reviewed from issue #{ISSUE_NUMBER})"
-)
-
-payload = {
-    "message": commit_message,
-    "content": file_content_encoded,
-}
-if existing:
-    payload["sha"] = existing["sha"]  # required for updates
-
-github_request("PUT", f"contents/{file_path}", payload)
-print(f"✅ Saved reformatted SQL to {file_path}")
+comment_body = review_note + response.choices[0].message.content.strip()
+print("Got response, posting comment...")
 
 # ── Post comment on issue ──────────────────────────────────────────────────────
-file_url = f"https://github.com/{REPO}/blob/main/{file_path}"
-comment_body += f"\n\n---\n📁 Reformatted script saved to [`{file_path}`]({file_url})"
-
-github_request(
-    "POST",
-    f"issues/{ISSUE_NUMBER}/comments",
-    {"body": comment_body},
+owner, repo = REPO.split("/")
+url  = f"https://api.github.com/repos/{owner}/{repo}/issues/{ISSUE_NUMBER}/comments"
+data = json.dumps({"body": comment_body}).encode()
+req  = urllib.request.Request(
+    url,
+    data=data,
+    headers={
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept":        "application/vnd.github+json",
+        "Content-Type":  "application/json",
+    },
 )
+urllib.request.urlopen(req)
 print(f"✅ Posted review comment on issue #{ISSUE_NUMBER}")
