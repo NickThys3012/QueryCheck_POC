@@ -5,9 +5,13 @@ description: Analyse and reformat T-SQL correction scripts for the CIR housing r
 
 # SQL Script Analysis & Formatting
 
+> ⚠️ **DO NOT write any files, create a branch, or open a pull request. Post everything as a single comment on the issue.**
+
 When reviewing a SQL script, always do **both** steps in order:
-1. **Reformat** the SQL file in place using the formatting rules below
-2. **Analyse** the reformatted script and save findings to `<ticket>-analysis.md` in the same directory
+1. **Reformat** the SQL using the formatting rules below
+2. **Analyse** the reformatted script
+
+Post both the reformatted SQL and the analysis as a **single issue comment**. Do not save anything to disk.
 
 When asked only to fix formatting, skip the analysis step.
 
@@ -26,7 +30,7 @@ When asked only to fix formatting, skip the analysis step.
 - Adding `AND REGI_RGST_CDE NOT IN ('RJCT', 'RFSD', 'ARCH')` to an existing `WHERE` clause
 - Any other change that alters the **logic, structure, or values** of the script
 
-When any of the above is needed, present the proposed change to the user and ask for confirmation before writing it to the file.
+When any of the above is needed, present the proposed change in the issue comment and ask for confirmation. Do not write it to any file.
 
 ## Formatting
 
@@ -42,7 +46,7 @@ When any of the above is needed, present the proposed change to the user and ask
 
 ## Analysis
 
-Save the analysis as `<ticket>-analysis.md` in the **same directory** as the SQL file.
+Post the analysis as part of the issue comment (not as a file).
 
 ### Structure
 
