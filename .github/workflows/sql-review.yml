@@ -1,10 +1,10 @@
 name: SQL Auto-Review
 
+# DISABLED: This workflow sends SQL data to the GitHub Models API (models.inference.ai.azure.com),
+# which is not the Copilot Enterprise instance. Disabled for data sensitivity reasons.
+# Use the Copilot cloud agent (assign-copilot.yml) instead.
 on:
-  issues:
-    types: [opened]
-  issue_comment:
-    types: [created]
+  workflow_dispatch:
 
 jobs:
   review:
@@ -16,7 +16,6 @@ jobs:
     permissions:
       issues: write
       models: read
-      contents: write
 
     steps:
       - uses: actions/checkout@v4
