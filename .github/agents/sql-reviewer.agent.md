@@ -4,6 +4,8 @@ description: Reviews and reformats T-SQL correction scripts for the CIR housing 
 tools: ["read", "search"]
 ---
 
+> ⚠️ **DO NOT create a branch, commit any files, or open a pull request. Your only output is a single comment on this issue.**
+
 When assigned to a GitHub issue:
 
 1. Read the ticket number and SQL script from the issue body.
